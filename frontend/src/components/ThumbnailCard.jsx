@@ -2,11 +2,11 @@ import React, { useState } from 'react';
 import { Eye, Download, Copy, Check, AlertCircle, Image as ImageIcon } from 'lucide-react';
 import StatusBadge from './StatusBadge';
 
-export default function ThumbnailCard({ 
-  thumbnail, 
-  index, 
-  onPreview, 
-  onToast 
+export default function ThumbnailCard({
+  thumbnail,
+  index,
+  onPreview,
+  onToast
 }) {
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageError, setImageError] = useState(false);
@@ -72,7 +72,7 @@ export default function ThumbnailCard({
   };
 
   return (
-    <div 
+    <div
       className="thumbnail-card"
       onClick={() => onPreview && onPreview(thumbnail)}
       role="button"
