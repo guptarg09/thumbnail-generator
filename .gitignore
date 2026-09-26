@@ -1,0 +1,34 @@
+# Environment variables & secrets
+.env
+*.env
+!.env.example
+
+# Python virtual environments & caches
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.sqlite
+*.db
+
+# Node & Frontend build
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Editor & OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Test generated artifacts
+huggingface_test.jpg
+backend/huggingface_test.jpg
+
+huggingface_test.png
+backend/huggingface_test.png
+
+backend/test_headshot.jpg
