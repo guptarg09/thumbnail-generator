@@ -32,3 +32,5 @@ huggingface_test.png
 backend/huggingface_test.png
 
 backend/test_headshot.jpg
+
+backend/test_huggingface.py
