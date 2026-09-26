@@ -17,3 +17,15 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "sqlite:///./thumbnailbuilder.db"
 )
+
+# Supabase Authentication Configuration
+SUPABASE_URL = os.getenv("SUPABASE_URL") or os.getenv("VITE_SUPABASE_URL", "")
+SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY") or os.getenv("VITE_SUPABASE_ANON_KEY", "")
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
+
+# # Debugging: print what was loaded
+# print("=== DEBUG: Config loaded from .env ===")
+# print("SUPABASE_URL:", "Set" if SUPABASE_URL else "MISSING")
+# print("SUPABASE_ANON_KEY:", "Set" if SUPABASE_ANON_KEY else "MISSING")
+# print("SUPABASE_JWT_SECRET:", "Set" if SUPABASE_JWT_SECRET else "MISSING")
+# print("=====================================")

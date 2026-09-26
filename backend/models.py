@@ -24,6 +24,7 @@ class Thumbnail(SQLModel, table=True):
 
 class Job(SQLModel, table=True):
     id: str = Field(default_factory=_uuid, primary_key=True)
+    user_id: Optional[str] = Field(default=None, index=True)
     prompt: Optional[str] = Field(default=None)
     headshot_url: Optional[str] = Field(default=None)
     num_thumbnails: int = Field(default=1)

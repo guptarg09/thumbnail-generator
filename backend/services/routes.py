@@ -12,6 +12,7 @@ import json
 
 from database import get_session
 from models import Job, Thumbnail
+from auth import get_current_user, AuthUser
 
 from services.generator import process_job, STYLE_ORDER
 from services.imagekit_service import upload_file, get_variants
@@ -38,9 +39,12 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat()
     }
 
-# upload headshot endpoint
+# upload headshot endpoint (authenticated)
 @router.post("/upload-headshot")
-async def upload_headshot(file: UploadFile = File(...)):
+async def upload_headshot(
+    file: UploadFile = File(...),
+    current_user: AuthUser = Depends(get_current_user)
+):
     filename = file.filename or "headshot.png"
     ext = os.path.splitext(filename)[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
@@ -120,10 +124,14 @@ class JobResponse(BaseModel):
     thumbnails: List[ThumbnailResponse]
 
 
-# create job endpoint
+# create job endpoint (authenticated, assigns job to current_user.id)
 @router.post("/jobs", response_model=CreateJobResponse)
-async def create_job(request: CreateJobRequest, session: Session = Depends(get_session)):  #this is a dependency injection
-    logger.info(f"POST /api/jobs received: prompt='{request.prompt}', headshot_url='{request.headshot_url}', num_thumbnails={request.num_thumbnails}")
+async def create_job(
+    request: CreateJobRequest,
+    current_user: AuthUser = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    logger.info(f"POST /api/jobs received from user {current_user.id}: prompt='{request.prompt}', headshot_url='{request.headshot_url}', num_thumbnails={request.num_thumbnails}")
 
     # validate the num_thumbnails
     if request.num_thumbnails < 1 or request.num_thumbnails > 3:
@@ -139,8 +147,9 @@ async def create_job(request: CreateJobRequest, session: Session = Depends(get_s
             detail="headshot_url must be a valid URL starting with 'http://' or 'https://'"
         )
 
-    # create a new job
-    job=Job(
+    # create a new job belonging to authenticated user
+    job = Job(
+        user_id=current_user.id,
         prompt=request.prompt,
         headshot_url=headshot_url,
         num_thumbnails=request.num_thumbnails
@@ -148,11 +157,11 @@ async def create_job(request: CreateJobRequest, session: Session = Depends(get_s
     session.add(job)
 
     # get no. of styles for thumbnails based on the num_thumbnails req
-    styles=STYLE_ORDER[:request.num_thumbnails]  
+    styles = STYLE_ORDER[:request.num_thumbnails]  
     
     # create a new thumbnail for each style
     for style in styles:
-        thumb=Thumbnail(
+        thumb = Thumbnail(
             job_id=job.id,
             style_name=style
         )
@@ -166,11 +175,15 @@ async def create_job(request: CreateJobRequest, session: Session = Depends(get_s
     return CreateJobResponse(job_id=job.id)
 
 
-# get job details from job id
+# get job details from job id (authenticated, checks ownership)
 @router.get("/jobs/{job_id}", response_model=JobResponse)
-async def get_job(job_id: str, session: Session = Depends(get_session)):
+async def get_job(
+    job_id: str,
+    current_user: AuthUser = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
     job = session.get(Job, job_id)
-    if not job:
+    if not job or job.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="Job not found")
     
     # get all thumbnails for the job
@@ -183,7 +196,7 @@ async def get_job(job_id: str, session: Session = Depends(get_session)):
     # generate image variants using imagekit api
     thumb_responses = []
     for t in thumbnails:
-        variants=get_variants(t.imagekit_url) if t.imagekit_url else None
+        variants = get_variants(t.imagekit_url) if t.imagekit_url else None
 
         thumb_responses.append(ThumbnailResponse(
             id=t.id,
@@ -204,9 +217,60 @@ async def get_job(job_id: str, session: Session = Depends(get_session)):
         thumbnails=thumb_responses
     )
 
+# get authenticated user's job history (ordered newest first)
+@router.get("/history", response_model=List[JobResponse])
+async def get_history(
+    current_user: AuthUser = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    jobs = session.exec(
+        select(Job)
+        .where(Job.user_id == current_user.id)
+        .order_by(Job.created_at.desc())
+    ).all()
+
+    results = []
+    for job in jobs:
+        thumbnails = session.exec(
+            select(Thumbnail).where(Thumbnail.job_id == job.id)
+        ).all()
+
+        thumb_responses = []
+        for t in thumbnails:
+            variants = get_variants(t.imagekit_url) if t.imagekit_url else None
+            thumb_responses.append(ThumbnailResponse(
+                id=t.id,
+                style_name=t.style_name,
+                status=t.status,
+                imagekit_url=t.imagekit_url,
+                error_message=t.error_message,
+                variants=variants
+            ))
+
+        results.append(JobResponse(
+            id=job.id,
+            prompt=job.prompt,
+            headshot_url=job.headshot_url,
+            num_thumbnails=job.num_thumbnails,
+            status=job.status,
+            created_at=job.created_at,
+            thumbnails=thumb_responses
+        ))
+
+    return results
+
 # stream job details -> The backend will keep this connection open and continuously send updates.
 @router.get("/jobs/{job_id}/stream")
-async def stream_job(job_id: str):
+async def stream_job(
+    job_id: str,
+    current_user: AuthUser = Depends(get_current_user),
+    session: Session = Depends(get_session)
+):
+    # Verify ownership upfront
+    initial_job = session.get(Job, job_id)
+    if not initial_job or initial_job.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Job not found")
+
     async def event_generator():
         from database import engine
         sent_thumbnails = set()
@@ -214,14 +278,14 @@ async def stream_job(job_id: str):
             events_to_send = []
             job_complete_event = None
 
-            with Session(engine) as session:
-                job = session.get(Job, job_id)
-                if not job:
+            with Session(engine) as db_session:
+                job = db_session.get(Job, job_id)
+                if not job or job.user_id != current_user.id:
                     error_data = json.dumps({"error": "Job not found"})
                     yield f"event: error\ndata: {error_data}\n\n"
                     return
 
-                thumbnails = session.exec(
+                thumbnails = db_session.exec(
                     select(Thumbnail).where(Thumbnail.job_id == job_id)
                 ).all()
 
@@ -263,7 +327,6 @@ async def stream_job(job_id: str):
                 return
 
             await asyncio.sleep(1.0)   
-
 
     return StreamingResponse(
         event_generator(),

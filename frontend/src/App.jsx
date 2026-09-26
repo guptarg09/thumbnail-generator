@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { uploadHeadshot, createJob, streamThumbnails } from './api';
 import Navbar from './components/Navbar';
 import Hero from './components/Hero';
@@ -7,11 +7,20 @@ import ThumbnailGallery from './components/ThumbnailGallery';
 import EmptyState from './components/EmptyState';
 import ThumbnailPreviewModal from './components/ThumbnailPreviewModal';
 import HelpModal from './components/HelpModal';
+import AuthModal from './components/AuthModal';
+import History from './components/History';
 import Toast from './components/Toast';
 import Footer from './components/Footer';
+import { useAuth } from './hooks/useAuth';
+import { Sparkles, Loader2 } from 'lucide-react';
 import './App.css';
 
 function App() {
+  const { user, loading: authLoading, isPasswordRecovery } = useAuth();
+
+  // Active View / Tab ('generator' | 'history')
+  const [activeTab, setActiveTab] = useState('generator');
+
   // Input State
   const [prompt, setPrompt] = useState('');
   const [headshot, setHeadshot] = useState(null);
@@ -32,6 +41,8 @@ function App() {
   // UI Modals & Toasts
   const [activePreview, setActivePreview] = useState(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authModalView, setAuthModalView] = useState('login');
   const [toasts, setToasts] = useState([]);
 
   // Refs
@@ -48,7 +59,36 @@ function App() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  // Cleanup SSE on unmount
+  // Open Auth Modal helper
+  const handleOpenAuth = useCallback((view = 'login') => {
+    setAuthModalView(view);
+    setAuthModalOpen(true);
+  }, []);
+
+  // When user is in password recovery mode, automatically trigger auth modal
+  useEffect(() => {
+    if (isPasswordRecovery) {
+      setAuthModalView('reset_password');
+      setAuthModalOpen(true);
+    }
+  }, [isPasswordRecovery]);
+
+  // When user logs out, reset state and return to generator tab
+  useEffect(() => {
+    if (!user) {
+      setActiveTab('generator');
+      setThumbnails([]);
+      setGenerationState({
+        step: 0,
+        message: '',
+        readyCount: 0,
+        failedCount: 0,
+        jobId: null
+      });
+    }
+  }, [user]);
+
+  // Cleanup SSE stream on unmount
   useEffect(() => {
     return () => {
       if (eventSourceRef.current) {
@@ -66,16 +106,33 @@ function App() {
   };
 
   const handleHeadshotChange = (file) => {
+    if (!user && file) {
+      handleOpenAuth('login');
+      addToast('info', 'Please sign in to upload assets and generate thumbnails.');
+      return;
+    }
     setHeadshot(file);
     if (errors.headshot) {
       setErrors((prev) => ({ ...prev, headshot: null }));
     }
   };
 
+  const handleNavigate = (tab) => {
+    if (tab === 'history' && !user) {
+      handleOpenAuth('login');
+      addToast('info', 'Please sign in to view your generation history.');
+      return;
+    }
+    setActiveTab(tab);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
   const scrollToSection = (sectionId) => {
     if (sectionId === 'create') {
+      setActiveTab('generator');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else if (sectionId === 'gallery') {
+      setActiveTab('generator');
       const element = document.getElementById('gallery');
       if (element) {
         element.scrollIntoView({ behavior: 'smooth' });
@@ -87,6 +144,13 @@ function App() {
 
   // Main Generation Flow
   const handleGenerate = async () => {
+    // 1. Guard with authentication
+    if (!user) {
+      handleOpenAuth('login');
+      addToast('info', 'Please sign in to generate thumbnails.');
+      return;
+    }
+
     const newErrors = {};
     if (!prompt.trim()) {
       newErrors.prompt = 'Please provide a topic or description for your thumbnail.';
@@ -119,7 +183,7 @@ function App() {
     });
 
     try {
-      // Step 1: Upload headshot
+      // Step 1: Upload headshot (authenticated)
       const uploadResult = await uploadHeadshot(headshot);
       const headshotUrl = uploadResult.url;
 
@@ -127,7 +191,7 @@ function App() {
         throw new Error('Upload succeeded but no asset URL was returned.');
       }
 
-      // Step 2: Create generation job
+      // Step 2: Create generation job (authenticated)
       setGenerationState((prev) => ({
         ...prev,
         step: 1,
@@ -148,7 +212,7 @@ function App() {
         message: 'Generating unique visual concepts with AI...'
       }));
 
-      // Step 3: Stream SSE updates
+      // Step 3: Stream SSE updates (authenticated)
       const es = await streamThumbnails(jobId, {
         onThumbnailReady: (data) => {
           setThumbnails((prev) => {
@@ -211,7 +275,7 @@ function App() {
         onError: (err) => {
           console.error('SSE Stream error:', err);
           setLoading(false);
-          addToast('error', 'Connection to thumbnail generation service was interrupted.');
+          addToast('error', err.error || 'Connection to thumbnail generation service was interrupted.');
           if (eventSourceRef.current) {
             eventSourceRef.current.close();
             eventSourceRef.current = null;
@@ -244,6 +308,18 @@ function App() {
     addToast('info', 'Workspace cleared.');
   };
 
+  // Initial loading splash to prevent flash of wrong auth state
+  if (authLoading) {
+    return (
+      <div className="app-init-loader">
+        <div className="brand-logo-icon" style={{ width: 44, height: 44, marginBottom: 16 }}>
+          <Sparkles size={24} />
+        </div>
+        <Loader2 size={24} className="spin-icon" style={{ color: 'var(--brand-primary)' }} />
+      </div>
+    );
+  }
+
   return (
     <div className="app-shell">
       {/* Toast Notification Container */}
@@ -255,6 +331,9 @@ function App() {
 
       {/* Top Navbar */}
       <Navbar
+        activeTab={activeTab}
+        onNavigate={handleNavigate}
+        onOpenAuth={handleOpenAuth}
         onScrollToSection={scrollToSection}
         onOpenHelp={() => setHelpOpen(true)}
         thumbnailCount={thumbnails.length}
@@ -263,39 +342,53 @@ function App() {
       {/* Main Page Content */}
       <main className="main-content">
         <div className="content-container">
-          {/* Hero Section */}
-          <Hero />
+          {activeTab === 'generator' ? (
+            <>
+              {/* Hero Section */}
+              <Hero />
 
-          {/* Creation Workspace */}
-          <GeneratorWorkspace
-            prompt={prompt}
-            onPromptChange={handlePromptChange}
-            headshot={headshot}
-            onHeadshotChange={handleHeadshotChange}
-            numThumbnails={numThumbnails}
-            onNumThumbnailsChange={setNumThumbnails}
-            onGenerate={handleGenerate}
-            loading={loading}
-            generationState={generationState}
-            errors={errors}
-            workspaceRef={workspaceRef}
-          />
-
-          {/* Results Gallery or Empty State */}
-          <div>
-            {thumbnails.length > 0 || loading ? (
-              <ThumbnailGallery
-                thumbnails={thumbnails}
+              {/* Creation Workspace */}
+              <GeneratorWorkspace
+                prompt={prompt}
+                onPromptChange={handlePromptChange}
+                headshot={headshot}
+                onHeadshotChange={handleHeadshotChange}
+                numThumbnails={numThumbnails}
+                onNumThumbnailsChange={setNumThumbnails}
+                onGenerate={handleGenerate}
                 loading={loading}
-                targetCount={numThumbnails}
-                onPreview={(t) => setActivePreview(t)}
-                onClear={handleClearResults}
-                onToast={addToast}
+                generationState={generationState}
+                errors={errors}
+                workspaceRef={workspaceRef}
               />
-            ) : (
-              <EmptyState onFocusPrompt={() => scrollToSection('create')} />
-            )}
-          </div>
+
+              {/* Results Gallery or Empty State */}
+              <div>
+                {thumbnails.length > 0 || loading ? (
+                  <ThumbnailGallery
+                    thumbnails={thumbnails}
+                    loading={loading}
+                    targetCount={numThumbnails}
+                    onPreview={(t) => setActivePreview(t)}
+                    onClear={handleClearResults}
+                    onToast={addToast}
+                  />
+                ) : (
+                  <EmptyState onFocusPrompt={() => scrollToSection('create')} />
+                )}
+              </div>
+            </>
+          ) : (
+            /* History Page */
+            <History
+              onNavigateToCreate={() => {
+                setActiveTab('generator');
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+              }}
+              onPreview={(t) => setActivePreview(t)}
+              onToast={addToast}
+            />
+          )}
         </div>
       </main>
 
@@ -312,6 +405,13 @@ function App() {
       <HelpModal
         isOpen={helpOpen}
         onClose={() => setHelpOpen(false)}
+      />
+
+      {/* Authentication Modal */}
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        initialView={authModalView}
       />
 
       {/* Application Footer */}
