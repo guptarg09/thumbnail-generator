@@ -23,14 +23,3 @@ dist-ssr/
 .idea/
 .DS_Store
 Thumbs.db
-
-# Test generated artifacts
-huggingface_test.jpg
-backend/huggingface_test.jpg
-
-huggingface_test.png
-backend/huggingface_test.png
-
-backend/test_headshot.jpg
-
-backend/test_huggingface.py
