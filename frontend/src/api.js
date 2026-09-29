@@ -1,6 +1,7 @@
 import { supabase } from './supabaseClient';
 
-const API_BASE = "/api";
+// API base URL (optional port 8000)
+const API_BASE = `${import.meta.env.VITE_API_URL || ""}/api`;
 
 /**
  * Retrieves the current Supabase session access token.
